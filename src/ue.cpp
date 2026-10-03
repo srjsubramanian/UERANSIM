@@ -7,9 +7,14 @@
 //
 
 #include <chrono>
+#include <cerrno>
+#include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include <unistd.h>
 
@@ -39,6 +44,9 @@ static struct Options
     std::string imsi{};
     int count{};
     int tempo{};
+    std::string scheduleFile{};
+    std::string activationLog{};
+    int64_t scheduleBarrierUnixNs{};
 } g_options{};
 
 struct NwUeControllerCmd : NtsMessage
@@ -266,6 +274,13 @@ static void ReadOptions(int argc, char **argv)
     opt::OptionItem itemCount = {'n', "num-of-UE", "Generate specified number of UEs starting from the given IMSI",
                                  "num"};
     opt::OptionItem itemTempo = {'t', "tempo", "Starting delay in milliseconds for each of the UEs", "tempo"};
+    opt::OptionItem itemSchedule = {'s', "schedule-file",
+                                    "Start UEs from an absolute-offset CSV schedule", "schedule-file"};
+    opt::OptionItem itemActivationLog = {'a', "activation-log",
+                                         "Write measured UE activation timestamps to CSV", "activation-log"};
+    opt::OptionItem itemScheduleBarrier = {'b', "schedule-barrier-unix-ns",
+                                           "Common UTC barrier in Unix nanoseconds for schedule offsets",
+                                           "unix-ns"};
     opt::OptionItem itemDisableCmd = {'l', "disable-cmd", "Disable command line functionality for this instance",
                                       std::nullopt};
     opt::OptionItem itemDisableRouting = {'r', "no-routing-config",
@@ -275,6 +290,9 @@ static void ReadOptions(int argc, char **argv)
     desc.items.push_back(itemImsi);
     desc.items.push_back(itemCount);
     desc.items.push_back(itemTempo);
+    desc.items.push_back(itemSchedule);
+    desc.items.push_back(itemActivationLog);
+    desc.items.push_back(itemScheduleBarrier);
     desc.items.push_back(itemDisableCmd);
     desc.items.push_back(itemDisableRouting);
 
@@ -299,6 +317,38 @@ static void ReadOptions(int argc, char **argv)
         g_options.tempo = utils::ParseInt(opt.getOption(itemTempo));
     else
         g_options.tempo = 0;
+
+    if (opt.hasFlag(itemSchedule))
+        g_options.scheduleFile = opt.getOption(itemSchedule);
+
+    if (opt.hasFlag(itemActivationLog))
+        g_options.activationLog = opt.getOption(itemActivationLog);
+
+    if (opt.hasFlag(itemScheduleBarrier))
+    {
+        std::string value = opt.getOption(itemScheduleBarrier);
+        size_t parsed = 0;
+        try
+        {
+            g_options.scheduleBarrierUnixNs = std::stoll(value, &parsed);
+        }
+        catch (const std::exception &)
+        {
+            throw std::runtime_error("Invalid schedule barrier Unix nanoseconds");
+        }
+        if (parsed != value.size() || g_options.scheduleBarrierUnixNs <= 0)
+            throw std::runtime_error("Invalid schedule barrier Unix nanoseconds");
+    }
+
+    if (!g_options.scheduleFile.empty() && g_options.tempo != 0)
+        throw std::runtime_error("--schedule-file and --tempo are mutually exclusive");
+
+    if (g_options.scheduleFile.empty() &&
+        (!g_options.activationLog.empty() || g_options.scheduleBarrierUnixNs != 0))
+        throw std::runtime_error("--activation-log/--schedule-barrier-unix-ns require --schedule-file");
+
+    if (!g_options.scheduleFile.empty() && g_options.activationLog.empty())
+        g_options.activationLog = g_options.scheduleFile + ".actual.csv";
 
     g_options.imsi = {};
     if (opt.hasFlag(itemImsi))
@@ -349,6 +399,178 @@ static std::string LargeSum(std::string a, std::string b)
 static void IncrementNumber(std::string &s, int delta)
 {
     s = LargeSum(s, std::to_string(delta));
+}
+
+struct ScheduleEntry
+{
+    int ueIndex{};
+    int64_t offsetNs{};
+};
+
+struct SchedulePlan
+{
+    std::string runId{};
+    std::string shardId{};
+    std::vector<ScheduleEntry> entries{};
+};
+
+struct ActivationRecord
+{
+    uint64_t sourceSeq{};
+    int ueIndex{};
+    int64_t scheduledOffsetNs{};
+    int64_t targetMonoNs{};
+    int64_t constructBeginMonoNs{};
+    int64_t constructBeginUtcNs{};
+    int64_t startCallMonoNs{};
+    int64_t startReturnMonoNs{};
+    int64_t latenessNs{};
+};
+
+static std::vector<std::string> SplitCsv(const std::string &line)
+{
+    std::vector<std::string> result{};
+    std::stringstream ss{line};
+    std::string field{};
+    while (std::getline(ss, field, ','))
+        result.push_back(field);
+    return result;
+}
+
+static int64_t ParseInt64Strict(const std::string &value, const std::string &field)
+{
+    size_t parsed = 0;
+    int64_t result = 0;
+    try
+    {
+        result = std::stoll(value, &parsed);
+    }
+    catch (const std::exception &)
+    {
+        throw std::runtime_error("Invalid " + field + " in schedule: " + value);
+    }
+
+    if (parsed != value.size())
+        throw std::runtime_error("Invalid " + field + " in schedule: " + value);
+    return result;
+}
+
+static SchedulePlan ReadSchedule(const std::string &path, int expectedCount)
+{
+    std::ifstream in{path};
+    if (!in)
+        throw std::runtime_error("Cannot open schedule file: " + path);
+
+    std::string line{};
+    if (!std::getline(in, line))
+        throw std::runtime_error("Schedule file is empty: " + path);
+    if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+
+    const std::string expectedHeader = "schema_version,run_id,shard_id,ue_index,offset_ns";
+    if (line != expectedHeader)
+        throw std::runtime_error("Unexpected schedule header: " + line);
+
+    SchedulePlan plan{};
+    std::vector<bool> seen(static_cast<size_t>(expectedCount), false);
+    int64_t previousOffset = -1;
+    int lineNo = 1;
+
+    while (std::getline(in, line))
+    {
+        lineNo++;
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (line.empty())
+            continue;
+
+        auto fields = SplitCsv(line);
+        if (fields.size() != 5)
+            throw std::runtime_error("Schedule line " + std::to_string(lineNo) + " must have 5 fields");
+        if (fields[0] != "1")
+            throw std::runtime_error("Unsupported schedule schema_version at line " + std::to_string(lineNo));
+        if (fields[1].empty() || fields[2].empty())
+            throw std::runtime_error("run_id and shard_id must be non-empty");
+
+        if (plan.entries.empty())
+        {
+            plan.runId = fields[1];
+            plan.shardId = fields[2];
+        }
+        else if (fields[1] != plan.runId || fields[2] != plan.shardId)
+        {
+            throw std::runtime_error("Mixed run_id/shard_id in schedule");
+        }
+
+        int64_t ueIndex64 = ParseInt64Strict(fields[3], "ue_index");
+        int64_t offsetNs = ParseInt64Strict(fields[4], "offset_ns");
+
+        if (ueIndex64 < 0 || ueIndex64 >= expectedCount)
+            throw std::runtime_error("ue_index out of range at line " + std::to_string(lineNo));
+        if (offsetNs < 0)
+            throw std::runtime_error("offset_ns must be non-negative at line " + std::to_string(lineNo));
+        if (offsetNs < previousOffset)
+            throw std::runtime_error("schedule offsets must be nondecreasing");
+        previousOffset = offsetNs;
+
+        int ueIndex = static_cast<int>(ueIndex64);
+        if (seen[static_cast<size_t>(ueIndex)])
+            throw std::runtime_error("duplicate ue_index in schedule: " + std::to_string(ueIndex));
+        seen[static_cast<size_t>(ueIndex)] = true;
+
+        plan.entries.push_back({ueIndex, offsetNs});
+    }
+
+    if (static_cast<int>(plan.entries.size()) != expectedCount)
+        throw std::runtime_error("schedule entry count does not match --num-of-UE");
+
+    for (int i = 0; i < expectedCount; i++)
+        if (!seen[static_cast<size_t>(i)])
+            throw std::runtime_error("schedule missing ue_index: " + std::to_string(i));
+
+    return plan;
+}
+
+static int64_t RealtimeNs()
+{
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+}
+
+static int64_t MonotonicNs()
+{
+    auto now = std::chrono::steady_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+}
+
+static void SleepUntilMonotonicNs(int64_t targetNs)
+{
+    auto target = std::chrono::steady_clock::time_point{std::chrono::nanoseconds{targetNs}};
+    std::this_thread::sleep_until(target);
+}
+
+static void WriteActivationLog(const SchedulePlan &plan, int64_t barrierUtcNs, int64_t armUtcNs,
+                               int64_t armMonoNs, const std::vector<ActivationRecord> &records)
+{
+    std::ofstream out{g_options.activationLog, std::ios::out | std::ios::trunc};
+    if (!out)
+        throw std::runtime_error("Cannot open activation log: " + g_options.activationLog);
+
+    out << "schema_version,run_id,shard_id,source_seq,ue_index,scheduled_offset_ns,"
+           "barrier_utc_ns,arm_utc_ns,arm_mono_ns,target_mono_ns,"
+           "construct_begin_mono_ns,construct_begin_utc_ns,start_call_mono_ns,"
+           "start_return_mono_ns,lateness_ns\n";
+
+    for (const auto &r : records)
+    {
+        out << "1," << plan.runId << "," << plan.shardId << "," << r.sourceSeq << "," << r.ueIndex << ","
+            << r.scheduledOffsetNs << "," << barrierUtcNs << "," << armUtcNs << "," << armMonoNs << ","
+            << r.targetMonoNs << "," << r.constructBeginMonoNs << "," << r.constructBeginUtcNs << ","
+            << r.startCallMonoNs << "," << r.startReturnMonoNs << "," << r.latenessNs << "\n";
+    }
+
+    if (!out)
+        throw std::runtime_error("Failed while writing activation log: " + g_options.activationLog);
 }
 
 static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
@@ -514,29 +736,99 @@ int main(int argc, char **argv)
         g_cliRespTask = new app::CliResponseTask(g_cliServer);
     }
 
-    for (int i = 0; i < g_options.count; i++)
+    if (!g_options.scheduleFile.empty())
     {
-        auto *config = GetConfigByUe(i);
-        auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
-        g_ueMap.put(config->getNodeName(), ue);
-    }
+        auto plan = ReadSchedule(g_options.scheduleFile, g_options.count);
 
-    if (!g_options.disableCmd)
-    {
-        app::CreateProcTable(g_ueMap, g_cliServer->assignedAddress().getPort());
-        g_cliRespTask->start();
-    }
+        std::vector<std::string> scheduledNodeNames{};
+        scheduledNodeNames.reserve(static_cast<size_t>(g_options.count));
+        for (int i = 0; i < g_options.count; i++)
+        {
+            auto *config = GetConfigByUe(i);
+            scheduledNodeNames.push_back(config->getNodeName());
+            delete config;
+        }
 
-    if (g_options.tempo != 0)
-    {
-        g_ueMap.invokeForeach([](const auto &ue) {
-            ue.second->start();
-            std::this_thread::sleep_for(std::chrono::milliseconds(g_options.tempo));
-        });
+        if (!g_options.disableCmd)
+        {
+            app::CreateProcTable(scheduledNodeNames, g_cliServer->assignedAddress().getPort());
+            g_cliRespTask->start();
+        }
+
+        int64_t armMonoNs = MonotonicNs();
+        int64_t armUtcNs = RealtimeNs();
+        int64_t barrierUtcNs = g_options.scheduleBarrierUnixNs;
+        if (barrierUtcNs == 0)
+            barrierUtcNs = armUtcNs + 1000000000LL;
+        if (barrierUtcNs <= armUtcNs)
+            throw std::runtime_error("Schedule barrier is not in the future");
+
+        int64_t barrierMonoNs = armMonoNs + (barrierUtcNs - armUtcNs);
+
+        std::vector<ActivationRecord> records{};
+        records.reserve(plan.entries.size());
+
+        try
+        {
+            uint64_t sourceSeq = 0;
+            for (const auto &entry : plan.entries)
+            {
+                int64_t targetMonoNs = barrierMonoNs + entry.offsetNs;
+                SleepUntilMonotonicNs(targetMonoNs);
+
+                ActivationRecord record{};
+                record.sourceSeq = ++sourceSeq;
+                record.ueIndex = entry.ueIndex;
+                record.scheduledOffsetNs = entry.offsetNs;
+                record.targetMonoNs = targetMonoNs;
+                record.constructBeginMonoNs = MonotonicNs();
+                record.constructBeginUtcNs = RealtimeNs();
+                record.latenessNs = record.constructBeginMonoNs - targetMonoNs;
+
+                auto *config = GetConfigByUe(entry.ueIndex);
+                auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
+                g_ueMap.put(config->getNodeName(), ue);
+
+                record.startCallMonoNs = MonotonicNs();
+                ue->start();
+                record.startReturnMonoNs = MonotonicNs();
+                records.push_back(record);
+            }
+        }
+        catch (...)
+        {
+            WriteActivationLog(plan, barrierUtcNs, armUtcNs, armMonoNs, records);
+            throw;
+        }
+
+        WriteActivationLog(plan, barrierUtcNs, armUtcNs, armMonoNs, records);
     }
     else
     {
-        g_ueMap.invokeForeach([](const auto &ue) { ue.second->start(); });
+        for (int i = 0; i < g_options.count; i++)
+        {
+            auto *config = GetConfigByUe(i);
+            auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
+            g_ueMap.put(config->getNodeName(), ue);
+        }
+
+        if (!g_options.disableCmd)
+        {
+            app::CreateProcTable(g_ueMap, g_cliServer->assignedAddress().getPort());
+            g_cliRespTask->start();
+        }
+
+        if (g_options.tempo != 0)
+        {
+            g_ueMap.invokeForeach([](const auto &ue) {
+                ue.second->start();
+                std::this_thread::sleep_for(std::chrono::milliseconds(g_options.tempo));
+            });
+        }
+        else
+        {
+            g_ueMap.invokeForeach([](const auto &ue) { ue.second->start(); });
+        }
     }
 
     while (true)
