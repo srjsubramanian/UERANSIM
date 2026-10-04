@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +40,7 @@ class RlsUdpTask : public NtsTask
     int64_t m_lastLoop;
     std::unordered_map<uint64_t, int> m_stiToUe;
     std::unordered_map<int, UeInfo> m_ueMap;
+    std::mutex m_ueMapMutex;
     int m_newIdCounter;
 
   public:
