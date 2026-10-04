@@ -107,23 +107,34 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
         if (m_stiToUe.count(msg->sti))
         {
             int ueId = m_stiToUe[msg->sti];
-            m_ueMap[ueId].address = addr;
-            m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
+            {
+                std::lock_guard<std::mutex> lock(m_ueMapMutex);
+                auto it = m_ueMap.find(ueId);
+                if (it != m_ueMap.end())
+                {
+                    it->second.address = addr;
+                    it->second.lastSeen = utils::CurrentTimeMillis();
+                }
+            }
         }
         else
         {
-            if (m_ueMap.size() >= MAX_UE_COUNT)
+            int ueId{};
             {
-                m_logger->warn("Max UE count reached, rejecting new UE");
-                return;
+                std::lock_guard<std::mutex> lock(m_ueMapMutex);
+                if (m_ueMap.size() >= MAX_UE_COUNT)
+                {
+                    m_logger->warn("Max UE count reached, rejecting new UE");
+                    return;
+                }
+
+                ueId = ++m_newIdCounter;
+                m_ueMap[ueId].sti = msg->sti;
+                m_ueMap[ueId].address = addr;
+                m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
             }
 
-            int ueId = ++m_newIdCounter;
-
             m_stiToUe[msg->sti] = ueId;
-            m_ueMap[ueId].sti = msg->sti;
-            m_ueMap[ueId].address = addr;
-            m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
 
             auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::SIGNAL_DETECTED);
             w->ueId = ueId;
@@ -162,20 +173,23 @@ void RlsUdpTask::heartbeatCycle(int64_t time)
     std::set<int> lostUeId{};
     std::set<uint64_t> lostSti{};
 
-    for (auto &item : m_ueMap)
     {
-        if (time - item.second.lastSeen > HEARTBEAT_THRESHOLD)
+        std::lock_guard<std::mutex> lock(m_ueMapMutex);
+        for (auto &item : m_ueMap)
         {
-            lostUeId.insert(item.first);
-            lostSti.insert(item.second.sti);
+            if (time - item.second.lastSeen > HEARTBEAT_THRESHOLD)
+            {
+                lostUeId.insert(item.first);
+                lostSti.insert(item.second.sti);
+            }
         }
+
+        for (int ueId : lostUeId)
+            m_ueMap.erase(ueId);
     }
 
     for (uint64_t sti : lostSti)
         m_stiToUe.erase(sti);
-
-    for (int ueId : lostUeId)
-        m_ueMap.erase(ueId);
 
     for (int ueId : lostUeId)
     {
@@ -194,18 +208,32 @@ void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
 {
     if (ueId == 0)
     {
-        for (auto &ue : m_ueMap)
-            send(ue.first, msg);
+        std::vector<InetAddress> addresses;
+        {
+            std::lock_guard<std::mutex> lock(m_ueMapMutex);
+            addresses.reserve(m_ueMap.size());
+            for (const auto &ue : m_ueMap)
+                addresses.push_back(ue.second.address);
+        }
+
+        for (const auto &address : addresses)
+            sendRlsPdu(address, msg);
         return;
     }
 
-    if (!m_ueMap.count(ueId))
+    InetAddress address;
     {
-        // ignore the message
-        return;
+        std::lock_guard<std::mutex> lock(m_ueMapMutex);
+        auto it = m_ueMap.find(ueId);
+        if (it == m_ueMap.end())
+        {
+            // ignore the message
+            return;
+        }
+        address = it->second.address;
     }
 
-    sendRlsPdu(m_ueMap[ueId].address, msg);
+    sendRlsPdu(address, msg);
 }
 
 } // namespace nr::gnb
