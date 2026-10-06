@@ -135,6 +135,9 @@ struct UeConfig
     bool configureRouting{};
     bool prefixLogger{};
 
+    /* SHARC run-scoped pseudonymous identity; never subscriber SUPI. */
+    std::string sharcUeRef{};
+
     [[nodiscard]] std::string getNodeName() const
     {
         if (supi.has_value())

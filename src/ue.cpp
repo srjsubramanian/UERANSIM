@@ -396,13 +396,6 @@ static void ReadOptions(int argc, char **argv)
             "--sharc-event-log requires --schedule-file");
     }
 
-    if (!g_options.sharcEventLog.empty() &&
-        g_options.sharcClockUncertaintyNs < 0)
-    {
-        throw std::runtime_error(
-            "--sharc-event-log requires --sharc-clock-uncertainty-ns");
-    }
-
     if (g_options.sharcEventLog.empty() &&
         g_options.sharcClockUncertaintyNs >= 0)
     {
@@ -863,6 +856,11 @@ int main(int argc, char **argv)
                 record.latenessNs = record.constructBeginMonoNs - targetMonoNs;
 
                 auto *config = GetConfigByUe(entry.ueIndex);
+
+                config->sharcUeRef =
+                    "sharc-ran-" + plan.shardId +
+                    ":ue-" + std::to_string(entry.ueIndex);
+
                 auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
                 g_ueMap.put(config->getNodeName(), ue);
 

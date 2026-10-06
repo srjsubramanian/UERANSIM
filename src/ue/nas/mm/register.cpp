@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <lib/nas/utils.hpp>
 #include <ue/nas/task.hpp>
+#include <ue/sharc_event.hpp>
 
 namespace nr::ue
 {
@@ -110,6 +111,18 @@ EProcRc NasMm::sendInitialRegistration(EInitialRegCause regCause)
     auto rc = sendNasMessage(*request);
     if (rc != EProcRc::OK)
         return rc;
+
+    /*
+     * SHARC observation boundary:
+     * sendNasMessage() has successfully queued the encoded NAS PDU
+     * toward the UE RRC task. This is UE-side NAS emission evidence;
+     * it is NOT N2 arrival evidence.
+     */
+    sharc::EmitRegistrationRequest(
+        m_base->config->sharcUeRef,
+        ToJson(regCause).str(),
+        m_regCounter,
+        ToJson(m_mmSubState).str());
 
     // Switch MM state
     switchMmState(EMmSubState::MM_REGISTERED_INITIATED_PS);

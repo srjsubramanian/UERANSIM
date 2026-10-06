@@ -10,6 +10,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -22,6 +23,124 @@ namespace nr::ue::sharc
 
 namespace
 {
+
+std::string EscapeStrictJson(const std::string &value)
+{
+    std::string out;
+    out.reserve(value.size() + 8);
+
+    char escaped[7]{};
+
+    for (unsigned char c : value)
+    {
+        switch (c)
+        {
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (c < 0x20)
+            {
+                std::snprintf(
+                    escaped,
+                    sizeof(escaped),
+                    "\\u%04x",
+                    static_cast<unsigned int>(c));
+                out += escaped;
+            }
+            else
+            {
+                out += static_cast<char>(c);
+            }
+            break;
+        }
+    }
+
+    return out;
+}
+
+void AppendStrictJson(const Json &json, std::ostream &out)
+{
+    switch (json.type())
+    {
+    case Json::Type::NULL_TYPE:
+        out << "null";
+        break;
+
+    case Json::Type::STRING:
+        out << '"' << EscapeStrictJson(json.str()) << '"';
+        break;
+
+    case Json::Type::BOOL:
+    case Json::Type::NUMBER:
+        out << json.str();
+        break;
+
+    case Json::Type::OBJECT: {
+        out << '{';
+
+        bool first = true;
+        for (const auto &item : json)
+        {
+            if (!first)
+                out << ',';
+
+            first = false;
+
+            out << '"'
+                << EscapeStrictJson(item.first)
+                << "\":";
+
+            AppendStrictJson(item.second, out);
+        }
+
+        out << '}';
+        break;
+    }
+
+    case Json::Type::ARRAY: {
+        out << '[';
+
+        bool first = true;
+        for (const auto &item : json)
+        {
+            if (!first)
+                out << ',';
+
+            first = false;
+            AppendStrictJson(item.second, out);
+        }
+
+        out << ']';
+        break;
+    }
+    }
+}
+
+std::string DumpStrictJson(const Json &json)
+{
+    std::ostringstream out;
+    AppendStrictJson(json, out);
+    return out.str();
+}
 
 int64_t MonotonicNs()
 {
@@ -78,8 +197,6 @@ class EventSink
             throw std::runtime_error("SHARC source_id is empty");
         if (m_mappingId.empty())
             throw std::runtime_error("SHARC clock mapping_id is empty");
-        if (m_clockUncertaintyNs < 0)
-            throw std::runtime_error("SHARC clock uncertainty must be non-negative");
         if (m_queueCapacity == 0)
             throw std::runtime_error("SHARC event queue capacity must be positive");
 
@@ -129,7 +246,10 @@ class EventSink
                  {"monotonic_ns", std::to_string(monoNs)},
                  {"realtime_ns", std::to_string(realNs)},
                  {"mapping_id", m_mappingId},
-                 {"uncertainty_ns", std::to_string(m_clockUncertaintyNs)},
+                 {"uncertainty_ns",
+                  m_clockUncertaintyNs >= 0
+                      ? Json{std::to_string(m_clockUncertaintyNs)}
+                      : Json{nullptr}},
              })},
             {"event_type", eventType},
             {"correlation",
@@ -162,7 +282,7 @@ class EventSink
 
         event.put("cause", "nas_to_rrc_enqueue_succeeded");
 
-        Enqueue(event.dumpJson());
+        Enqueue(DumpStrictJson(event));
     }
 
     void EmitTimerEvent(
@@ -202,7 +322,7 @@ class EventSink
 
         event.put("cause", nullptr);
 
-        Enqueue(event.dumpJson());
+        Enqueue(DumpStrictJson(event));
     }
 
     void EmitRecoveryTrigger(
@@ -224,7 +344,7 @@ class EventSink
 
         event.put("cause", cause);
 
-        Enqueue(event.dumpJson());
+        Enqueue(DumpStrictJson(event));
     }
 
   private:
@@ -359,7 +479,7 @@ class EventSink
                 return;
             }
 
-            out << stats.dumpJson() << '\n';
+            out << DumpStrictJson(stats) << '\n';
 
             if (!out)
             {
