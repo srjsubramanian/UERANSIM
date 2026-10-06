@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -24,6 +25,7 @@
 #include <lib/app/proc_table.hpp>
 #include <lib/app/ue_ctl.hpp>
 #include <ue/ue.hpp>
+#include <ue/sharc_event.hpp>
 #include <utils/common.hpp>
 #include <utils/concurrent_map.hpp>
 #include <utils/constants.hpp>
@@ -47,6 +49,9 @@ static struct Options
     std::string scheduleFile{};
     std::string activationLog{};
     int64_t scheduleBarrierUnixNs{};
+
+    std::string sharcEventLog{};
+    int64_t sharcClockUncertaintyNs{-1};
 } g_options{};
 
 struct NwUeControllerCmd : NtsMessage
@@ -281,6 +286,12 @@ static void ReadOptions(int argc, char **argv)
     opt::OptionItem itemScheduleBarrier = {'b', "schedule-barrier-unix-ns",
                                            "Common UTC barrier in Unix nanoseconds for schedule offsets",
                                            "unix-ns"};
+    opt::OptionItem itemSharcEventLog = {'E', "sharc-event-log",
+                                         "Write SHARC structured UE source events as JSONL",
+                                         "path"};
+    opt::OptionItem itemSharcClockUncertainty = {'U', "sharc-clock-uncertainty-ns",
+                                                 "Clock mapping uncertainty bound for SHARC events",
+                                                 "nanoseconds"};
     opt::OptionItem itemDisableCmd = {'l', "disable-cmd", "Disable command line functionality for this instance",
                                       std::nullopt};
     opt::OptionItem itemDisableRouting = {'r', "no-routing-config",
@@ -293,6 +304,8 @@ static void ReadOptions(int argc, char **argv)
     desc.items.push_back(itemSchedule);
     desc.items.push_back(itemActivationLog);
     desc.items.push_back(itemScheduleBarrier);
+    desc.items.push_back(itemSharcEventLog);
+    desc.items.push_back(itemSharcClockUncertainty);
     desc.items.push_back(itemDisableCmd);
     desc.items.push_back(itemDisableRouting);
 
@@ -349,6 +362,53 @@ static void ReadOptions(int argc, char **argv)
 
     if (!g_options.scheduleFile.empty() && g_options.activationLog.empty())
         g_options.activationLog = g_options.scheduleFile + ".actual.csv";
+
+    if (opt.hasFlag(itemSharcEventLog))
+        g_options.sharcEventLog = opt.getOption(itemSharcEventLog);
+
+    if (opt.hasFlag(itemSharcClockUncertainty))
+    {
+        std::string value = opt.getOption(itemSharcClockUncertainty);
+        size_t parsed = 0;
+
+        try
+        {
+            g_options.sharcClockUncertaintyNs = std::stoll(value, &parsed);
+        }
+        catch (const std::exception &)
+        {
+            throw std::runtime_error(
+                "Invalid SHARC clock uncertainty nanoseconds");
+        }
+
+        if (parsed != value.size() ||
+            g_options.sharcClockUncertaintyNs < 0)
+        {
+            throw std::runtime_error(
+                "Invalid SHARC clock uncertainty nanoseconds");
+        }
+    }
+
+    if (!g_options.sharcEventLog.empty() &&
+        g_options.scheduleFile.empty())
+    {
+        throw std::runtime_error(
+            "--sharc-event-log requires --schedule-file");
+    }
+
+    if (!g_options.sharcEventLog.empty() &&
+        g_options.sharcClockUncertaintyNs < 0)
+    {
+        throw std::runtime_error(
+            "--sharc-event-log requires --sharc-clock-uncertainty-ns");
+    }
+
+    if (g_options.sharcEventLog.empty() &&
+        g_options.sharcClockUncertaintyNs >= 0)
+    {
+        throw std::runtime_error(
+            "--sharc-clock-uncertainty-ns requires --sharc-event-log");
+    }
 
     g_options.imsi = {};
     if (opt.hasFlag(itemImsi))
@@ -739,6 +799,23 @@ int main(int argc, char **argv)
     if (!g_options.scheduleFile.empty())
     {
         auto plan = ReadSchedule(g_options.scheduleFile, g_options.count);
+
+        if (!g_options.sharcEventLog.empty())
+        {
+            const std::string sourceId = "sharc-ran-" + plan.shardId;
+            const std::string mappingId =
+                plan.runId + ":" + sourceId;
+
+            nr::ue::sharc::ConfigureEventSink(
+                g_options.sharcEventLog,
+                plan.runId,
+                sourceId,
+                mappingId,
+                g_options.sharcClockUncertaintyNs,
+                65536);
+
+            std::atexit(nr::ue::sharc::ShutdownEventSink);
+        }
 
         std::vector<std::string> scheduledNodeNames{};
         scheduledNodeNames.reserve(static_cast<size_t>(g_options.count));
