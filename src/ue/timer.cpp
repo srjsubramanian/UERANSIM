@@ -116,6 +116,11 @@ int UeTimer::getInterval() const
     return m_interval;
 }
 
+int64_t UeTimer::getStartMillis() const
+{
+    return m_startMillis;
+}
+
 int UeTimer::getRemaining() const
 {
     if (!m_isRunning)

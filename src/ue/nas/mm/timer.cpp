@@ -12,9 +12,171 @@
 #include <ue/app/task.hpp>
 #include <ue/nas/task.hpp>
 #include <ue/rrc/task.hpp>
+#include <ue/sharc_event.hpp>
 
 namespace nr::ue
 {
+
+NasMm::SharcTimerTraceState *NasMm::sharcTimerTraceState(int timerCode)
+{
+    switch (timerCode)
+    {
+    case 3502:
+        return &m_sharcT3502;
+    case 3510:
+        return &m_sharcT3510;
+    case 3511:
+        return &m_sharcT3511;
+    default:
+        return nullptr;
+    }
+}
+
+const char *NasMm::sharcTimerName(int timerCode) const
+{
+    switch (timerCode)
+    {
+    case 3502:
+        return "T3502";
+    case 3510:
+        return "T3510";
+    case 3511:
+        return "T3511";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+void NasMm::startSharcTimer(UeTimer &timer)
+{
+    auto *trace = sharcTimerTraceState(timer.getCode());
+
+    if (!trace)
+    {
+        timer.start();
+        return;
+    }
+
+    if (sharc::EventSinkEnabled() && timer.isRunning() && trace->active)
+    {
+        const std::string timerName = sharcTimerName(timer.getCode());
+        const std::string instanceId =
+            m_base->config->sharcUeRef + ":" +
+            timerName + ":" +
+            std::to_string(trace->activeLocalIndex);
+
+        sharc::EmitTimerEvent(
+            m_base->config->sharcUeRef,
+            timerName,
+            instanceId,
+            "cancel",
+            trace->durationNs,
+            "realtime",
+            trace->startSourceNs,
+            trace->startSourceNs + trace->durationNs,
+            trace->activeLocalIndex,
+            m_regCounter,
+            0);
+    }
+
+    timer.start();
+
+    if (!sharc::EventSinkEnabled())
+        return;
+
+    trace->activeLocalIndex = trace->nextLocalIndex++;
+    trace->startSourceNs = timer.getStartMillis() * 1000000LL;
+    trace->durationNs =
+        static_cast<int64_t>(timer.getInterval()) * 1000000000LL;
+    trace->active = true;
+
+    const std::string timerName = sharcTimerName(timer.getCode());
+    const std::string instanceId =
+        m_base->config->sharcUeRef + ":" +
+        timerName + ":" +
+        std::to_string(trace->activeLocalIndex);
+
+    sharc::EmitTimerEvent(
+        m_base->config->sharcUeRef,
+        timerName,
+        instanceId,
+        "start",
+        trace->durationNs,
+        "realtime",
+        trace->startSourceNs,
+        trace->startSourceNs + trace->durationNs,
+        trace->activeLocalIndex,
+        m_regCounter,
+        0);
+}
+
+void NasMm::stopSharcTimer(UeTimer &timer)
+{
+    auto *trace = sharcTimerTraceState(timer.getCode());
+
+    const bool wasRunning = timer.isRunning();
+
+    if (!trace)
+    {
+        timer.stop();
+        return;
+    }
+
+    timer.stop();
+
+    if (!sharc::EventSinkEnabled() || !wasRunning || !trace->active)
+        return;
+
+    const std::string timerName = sharcTimerName(timer.getCode());
+    const std::string instanceId =
+        m_base->config->sharcUeRef + ":" +
+        timerName + ":" +
+        std::to_string(trace->activeLocalIndex);
+
+    sharc::EmitTimerEvent(
+        m_base->config->sharcUeRef,
+        timerName,
+        instanceId,
+        "cancel",
+        trace->durationNs,
+        "realtime",
+        trace->startSourceNs,
+        trace->startSourceNs + trace->durationNs,
+        trace->activeLocalIndex,
+        m_regCounter,
+        0);
+
+    trace->active = false;
+}
+
+void NasMm::emitSharcTimerExpiry(UeTimer &timer)
+{
+    auto *trace = sharcTimerTraceState(timer.getCode());
+
+    if (!trace || !sharc::EventSinkEnabled() || !trace->active)
+        return;
+
+    const std::string timerName = sharcTimerName(timer.getCode());
+    const std::string instanceId =
+        m_base->config->sharcUeRef + ":" +
+        timerName + ":" +
+        std::to_string(trace->activeLocalIndex);
+
+    sharc::EmitTimerEvent(
+        m_base->config->sharcUeRef,
+        timerName,
+        instanceId,
+        "expire",
+        trace->durationNs,
+        "realtime",
+        trace->startSourceNs,
+        trace->startSourceNs + trace->durationNs,
+        trace->activeLocalIndex,
+        m_regCounter,
+        0);
+
+    trace->active = false;
+}
 
 void NasMm::onTimerExpire(UeTimer &timer)
 {
@@ -50,7 +212,16 @@ void NasMm::onTimerExpire(UeTimer &timer)
             resetRegAttemptCounter();
 
             if (m_mmSubState == EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION)
-                initialRegistrationRequired(EInitialRegCause::T3502_EXPIRY_IN_ATT_REG);
+            {
+                sharc::EmitRecoveryTrigger(
+                    m_base->config->sharcUeRef,
+                    "T3502_EXPIRY_IN_ATT_REG",
+                    m_regCounter,
+                    ToJson(m_mmSubState).str());
+
+                initialRegistrationRequired(
+                    EInitialRegCause::T3502_EXPIRY_IN_ATT_REG);
+            }
             if (m_mmSubState == EMmSubState::MM_REGISTERED_ATTEMPTING_REGISTRATION_UPDATE)
                 mobilityUpdatingRequired(ERegUpdateCause::T3502_EXPIRY_IN_ATT_UPD);
         }
@@ -77,6 +248,14 @@ void NasMm::onTimerExpire(UeTimer &timer)
                     localReleaseConnection(false);
                 }
 
+                sharc::EmitRecoveryTrigger(
+                    m_base->config->sharcUeRef,
+                    regType == nas::ERegistrationType::INITIAL_REGISTRATION
+                        ? "T3510_EXPIRY_INITIAL_REGISTRATION"
+                        : "T3510_EXPIRY_EMERGENCY_REGISTRATION",
+                    m_regCounter,
+                    ToJson(m_mmSubState).str());
+
                 handleAbnormalInitialRegFailure(regType);
             }
             else if (regType == nas::ERegistrationType::MOBILITY_REGISTRATION_UPDATING ||
@@ -97,6 +276,13 @@ void NasMm::onTimerExpire(UeTimer &timer)
         else if (m_mmSubState == EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION)
         {
             logExpired();
+
+            sharc::EmitRecoveryTrigger(
+                m_base->config->sharcUeRef,
+                "T3511_EXPIRY_IN_ATT_REG",
+                m_regCounter,
+                ToJson(m_mmSubState).str());
+
             initialRegistrationRequired(EInitialRegCause::T3511_EXPIRY_IN_ATT_REG);
         }
         break;

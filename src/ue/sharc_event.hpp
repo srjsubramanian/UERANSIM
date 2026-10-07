@@ -31,9 +31,12 @@ void EmitTimerEvent(
     const std::string &timerInstanceId,
     const std::string &phase,
     int64_t durationNs,
-    int64_t deadlineMonotonicNs,
+    const std::string &sourceClock,
+    int64_t startSourceNs,
+    int64_t deadlineSourceNs,
     uint64_t localIndex,
-    int localCounter);
+    int localCounter,
+    int64_t jitterNs);
 
 void EmitRecoveryTrigger(
     const std::string &ueRef,

@@ -232,7 +232,7 @@ void NasMm::receiveDeregistrationRequest(const nas::DeRegistrationRequestUeTermi
         m_usim->m_currentNsCtx = {};
         m_usim->m_nonCurrentNsCtx = {};
         switchUState(E5UState::U2_NOT_UPDATED);
-        m_timers->t3502.start();
+        startSharcTimer(m_timers->t3502);
         switchMmState(EMmSubState::MM_DEREGISTERED_PLMN_SEARCH);
     };
 

@@ -38,6 +38,7 @@ class UeTimer
     [[nodiscard]] int getCode() const;
     [[nodiscard]] bool isMmTimer() const;
     [[nodiscard]] int getInterval() const;
+    [[nodiscard]] int64_t getStartMillis() const;
     [[nodiscard]] int getRemaining() const;
     [[nodiscard]] int getExpiryCount() const;
 };

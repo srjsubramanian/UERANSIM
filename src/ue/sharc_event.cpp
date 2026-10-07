@@ -291,9 +291,12 @@ class EventSink
         const std::string &timerInstanceId,
         const std::string &phase,
         int64_t durationNs,
-        int64_t deadlineMonotonicNs,
+        const std::string &sourceClock,
+        int64_t startSourceNs,
+        int64_t deadlineSourceNs,
         uint64_t localIndex,
-        int localCounter)
+        int localCounter,
+        int64_t jitterNs)
     {
         std::string eventType;
         if (phase == "start")
@@ -314,10 +317,13 @@ class EventSink
                 {"timer_instance_id", timerInstanceId},
                 {"phase", phase},
                 {"duration_ns", std::to_string(durationNs)},
-                {"deadline_monotonic_ns", std::to_string(deadlineMonotonicNs)},
+                {"source_clock", sourceClock},
+                {"start_source_ns", std::to_string(startSourceNs)},
+                {"deadline_source_ns", std::to_string(deadlineSourceNs)},
                 {"policy_generation", static_cast<int32_t>(0)},
                 {"local_index", static_cast<int64_t>(localIndex)},
                 {"local_counter", static_cast<int32_t>(localCounter)},
+                {"jitter_ns", std::to_string(jitterNs)},
             }));
 
         event.put("cause", nullptr);
@@ -571,9 +577,12 @@ void EmitTimerEvent(
     const std::string &timerInstanceId,
     const std::string &phase,
     int64_t durationNs,
-    int64_t deadlineMonotonicNs,
+    const std::string &sourceClock,
+    int64_t startSourceNs,
+    int64_t deadlineSourceNs,
     uint64_t localIndex,
-    int localCounter)
+    int localCounter,
+    int64_t jitterNs)
 {
     if (g_eventSink)
         g_eventSink->EmitTimerEvent(
@@ -582,9 +591,12 @@ void EmitTimerEvent(
             timerInstanceId,
             phase,
             durationNs,
-            deadlineMonotonicNs,
+            sourceClock,
+            startSourceNs,
+            deadlineSourceNs,
             localIndex,
-            localCounter);
+            localCounter,
+            jitterNs);
 }
 
 void EmitRecoveryTrigger(

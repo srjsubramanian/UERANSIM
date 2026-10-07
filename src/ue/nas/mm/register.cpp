@@ -131,9 +131,9 @@ EProcRc NasMm::sendInitialRegistration(EInitialRegCause regCause)
     m_lastRegWithoutNsc = m_usim->m_currentNsCtx == nullptr;
 
     // Process timers
-    m_timers->t3510.start();
-    m_timers->t3502.stop();
-    m_timers->t3511.stop();
+    startSharcTimer(m_timers->t3510);
+    stopSharcTimer(m_timers->t3502);
+    stopSharcTimer(m_timers->t3511);
 
     return EProcRc::OK;
 }
@@ -263,9 +263,9 @@ EProcRc NasMm::sendMobilityRegistration(ERegUpdateCause updateCause)
     switchMmState(EMmSubState::MM_REGISTERED_INITIATED_PS);
 
     // Process timers
-    m_timers->t3510.start();
-    m_timers->t3502.stop();
-    m_timers->t3511.stop();
+    startSharcTimer(m_timers->t3510);
+    stopSharcTimer(m_timers->t3502);
+    stopSharcTimer(m_timers->t3511);
 
     return EProcRc::OK;
 }
@@ -945,7 +945,7 @@ void NasMm::receiveMobilityRegistrationReject(const nas::RegistrationReject &msg
 void NasMm::handleAbnormalInitialRegFailure(nas::ERegistrationType regType)
 {
     // Timer T3510 shall be stopped if still running
-    m_timers->t3510.stop();
+    stopSharcTimer(m_timers->t3510);
 
     // If the registration procedure is neither an initial registration for emergency services nor for establishing an
     // emergency PDU session with registration type not set to "emergency registration", the registration attempt
@@ -961,7 +961,7 @@ void NasMm::handleAbnormalInitialRegFailure(nas::ERegistrationType regType)
         // initial registration shall be restarted, if still required.
         if (!hasEmergency())
         {
-            m_timers->t3511.start();
+            startSharcTimer(m_timers->t3511);
             switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
         }
     }
@@ -976,7 +976,7 @@ void NasMm::handleAbnormalInitialRegFailure(nas::ERegistrationType regType)
         m_usim->m_nonCurrentNsCtx = {};
 
         // .. start timer T3502 ..
-        m_timers->t3502.start();
+        startSharcTimer(m_timers->t3502);
 
         // .. and shall set the 5GS update status to 5U2 NOT UPDATED. The state is changed to
         // 5GMM-DEREGISTERED.ATTEMPTING-REGISTRATION or optionally to 5GMM-DEREGISTERED.PLMN-SEARCH in order to perform
@@ -989,7 +989,7 @@ void NasMm::handleAbnormalInitialRegFailure(nas::ERegistrationType regType)
 void NasMm::handleAbnormalMobilityRegFailure(nas::ERegistrationType regType)
 {
     // "Timer T3510 shall be stopped if still running"
-    m_timers->t3510.stop();
+    stopSharcTimer(m_timers->t3510);
 
     // "The registration attempt counter shall be incremented, unless it was already set to 5."
     if (m_regCounter != 5)
@@ -1009,7 +1009,7 @@ void NasMm::handleAbnormalMobilityRegFailure(nas::ERegistrationType regType)
             // "The UE shall start timer T3511, shall set the 5GS update status to 5U2 NOT UPDATED and change to state
             // 5GMM-REGISTERED.ATTEMPTING-REGISTRATION-UPDATE. When timer T3511 expires and the registration update
             // procedure is triggered again"
-            m_timers->t3511.start(); // todo
+            startSharcTimer(m_timers->t3511); // todo
             switchUState(E5UState::U2_NOT_UPDATED);
             switchMmState(EMmSubState::MM_REGISTERED_ATTEMPTING_REGISTRATION_UPDATE);
         }
@@ -1022,13 +1022,13 @@ void NasMm::handleAbnormalMobilityRegFailure(nas::ERegistrationType regType)
             // "The UE shall keep the 5GS update status to 5U1 UPDATED and enter state 5GMM-REGISTERED.NORMAL-SERVICE."
             switchMmState(EMmSubState::MM_REGISTERED_NORMAL_SERVICE);
             // "The UE shall start timer T3511"
-            m_timers->t3511.start();
+            startSharcTimer(m_timers->t3511);
         }
     }
     else
     {
         // "The UE shall start timer T3502, shall set the 5GS update status to 5U2 NOT UPDATED."
-        m_timers->t3502.start();
+        startSharcTimer(m_timers->t3502);
         switchUState(E5UState::U2_NOT_UPDATED);
 
         // "The UE shall delete the list of equivalent PLMNs and shall change to state

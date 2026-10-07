@@ -58,7 +58,7 @@ bool NasMm::startECallInactivityIfNeeded()
     // d) enter 5GMM-DEREGISTERED.eCALL-INACTIVE state."
 
     // TODO: Spec says 'other running timers' in item a), what are those timers other than 3511 and 3512?
-    m_timers->t3511.stop();
+    stopSharcTimer(m_timers->t3511);
     m_timers->t3512.stop();
 
     // And perform de-registration.

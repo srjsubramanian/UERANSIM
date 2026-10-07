@@ -72,6 +72,19 @@ class NasMm
     // Last time MM state changed
     int64_t m_lastTimeMmStateChange{};
 
+    struct SharcTimerTraceState
+    {
+        uint64_t nextLocalIndex{};
+        uint64_t activeLocalIndex{};
+        int64_t startSourceNs{};
+        int64_t durationNs{};
+        bool active{};
+    };
+
+    SharcTimerTraceState m_sharcT3502{};
+    SharcTimerTraceState m_sharcT3510{};
+    SharcTimerTraceState m_sharcT3511{};
+
     friend class UeCmdHandler;
     friend class NasSm;
     friend class NasTask;
@@ -189,6 +202,13 @@ class NasMm
     bool switchToECallInactivityIfNeeded();
 
   private: /* Timer */
+    SharcTimerTraceState *sharcTimerTraceState(int timerCode);
+    const char *sharcTimerName(int timerCode) const;
+
+    void startSharcTimer(UeTimer &timer);
+    void stopSharcTimer(UeTimer &timer);
+    void emitSharcTimerExpiry(UeTimer &timer);
+
     void onTimerExpire(UeTimer &timer);
 
   private: /* Procedure Control */

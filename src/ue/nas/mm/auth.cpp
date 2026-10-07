@@ -447,7 +447,7 @@ void NasMm::receiveAuthenticationReject(const nas::AuthenticationReject &msg)
     m_usim->invalidate();
     // The UE shall abort any 5GMM signalling procedure, stop any of the timers T3510, T3516, T3517, T3519 or T3521 (if
     // they were running) ..
-    m_timers->t3510.stop();
+    stopSharcTimer(m_timers->t3510);
     m_timers->t3516.stop();
     m_timers->t3517.stop();
     m_timers->t3519.stop();

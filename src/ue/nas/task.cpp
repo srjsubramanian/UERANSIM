@@ -143,11 +143,20 @@ void NasTask::performTick()
     if (timers.t3445.performTick())
         sendExpireMsg(&timers.t3445);
     if (timers.t3502.performTick())
+    {
+        mm->emitSharcTimerExpiry(timers.t3502);
         sendExpireMsg(&timers.t3502);
+    }
     if (timers.t3510.performTick())
+    {
+        mm->emitSharcTimerExpiry(timers.t3510);
         sendExpireMsg(&timers.t3510);
+    }
     if (timers.t3511.performTick())
+    {
+        mm->emitSharcTimerExpiry(timers.t3511);
         sendExpireMsg(&timers.t3511);
+    }
     if (timers.t3512.performTick())
         sendExpireMsg(&timers.t3512);
     if (timers.t3516.performTick())
