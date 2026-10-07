@@ -67,6 +67,8 @@ void NasMm::startSharcTimer(UeTimer &timer)
 
         sharc::EmitTimerEvent(
             m_base->config->sharcUeRef,
+            trace->episodeId,
+            trace->attemptId,
             timerName,
             instanceId,
             "cancel",
@@ -88,6 +90,10 @@ void NasMm::startSharcTimer(UeTimer &timer)
     trace->startSourceNs = timer.getStartMillis() * 1000000LL;
     trace->durationNs =
         static_cast<int64_t>(timer.getInterval()) * 1000000000LL;
+
+    trace->episodeId = m_base->config->sharcEpisodeId;
+    trace->attemptId = m_sharcActiveAttemptId;
+
     trace->active = true;
 
     const std::string timerName = sharcTimerName(timer.getCode());
@@ -98,6 +104,8 @@ void NasMm::startSharcTimer(UeTimer &timer)
 
     sharc::EmitTimerEvent(
         m_base->config->sharcUeRef,
+        trace->episodeId,
+        trace->attemptId,
         timerName,
         instanceId,
         "start",
@@ -135,6 +143,8 @@ void NasMm::stopSharcTimer(UeTimer &timer)
 
     sharc::EmitTimerEvent(
         m_base->config->sharcUeRef,
+        trace->episodeId,
+        trace->attemptId,
         timerName,
         instanceId,
         "cancel",
@@ -164,6 +174,8 @@ void NasMm::emitSharcTimerExpiry(UeTimer &timer)
 
     sharc::EmitTimerEvent(
         m_base->config->sharcUeRef,
+        trace->episodeId,
+        trace->attemptId,
         timerName,
         instanceId,
         "expire",
@@ -215,6 +227,8 @@ void NasMm::onTimerExpire(UeTimer &timer)
             {
                 sharc::EmitRecoveryTrigger(
                     m_base->config->sharcUeRef,
+                    m_base->config->sharcEpisodeId,
+                    m_sharcActiveAttemptId,
                     "T3502_EXPIRY_IN_ATT_REG",
                     m_regCounter,
                     ToJson(m_mmSubState).str());
@@ -250,6 +264,8 @@ void NasMm::onTimerExpire(UeTimer &timer)
 
                 sharc::EmitRecoveryTrigger(
                     m_base->config->sharcUeRef,
+                    m_base->config->sharcEpisodeId,
+                    m_sharcActiveAttemptId,
                     regType == nas::ERegistrationType::INITIAL_REGISTRATION
                         ? "T3510_EXPIRY_INITIAL_REGISTRATION"
                         : "T3510_EXPIRY_EMERGENCY_REGISTRATION",
@@ -279,6 +295,8 @@ void NasMm::onTimerExpire(UeTimer &timer)
 
             sharc::EmitRecoveryTrigger(
                 m_base->config->sharcUeRef,
+                m_base->config->sharcEpisodeId,
+                m_sharcActiveAttemptId,
                 "T3511_EXPIRY_IN_ATT_REG",
                 m_regCounter,
                 ToJson(m_mmSubState).str());

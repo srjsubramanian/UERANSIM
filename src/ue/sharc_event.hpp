@@ -21,12 +21,17 @@ bool EventSinkEnabled();
 
 void EmitRegistrationRequest(
     const std::string &ueRef,
+    const std::string &episodeId,
+    const std::string &attemptId,
+    const std::string &requestRole,
     const std::string &trigger,
     int registrationCounter,
     const std::string &mmState);
 
 void EmitTimerEvent(
     const std::string &ueRef,
+    const std::string &episodeId,
+    const std::string &attemptId,
     const std::string &timerName,
     const std::string &timerInstanceId,
     const std::string &phase,
@@ -40,6 +45,8 @@ void EmitTimerEvent(
 
 void EmitRecoveryTrigger(
     const std::string &ueRef,
+    const std::string &episodeId,
+    const std::string &attemptId,
     const std::string &cause,
     int registrationCounter,
     const std::string &mmState);

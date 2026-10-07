@@ -861,6 +861,13 @@ int main(int argc, char **argv)
                     "sharc-ran-" + plan.shardId +
                     ":ue-" + std::to_string(entry.ueIndex);
 
+                /*
+                 * Episode identifiers are run-scoped; run_id is carried
+                 * separately by every structured event.
+                 */
+                config->sharcEpisodeId =
+                    config->sharcUeRef + ":episode-0";
+
                 auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
                 g_ueMap.put(config->getNodeName(), ue);
 

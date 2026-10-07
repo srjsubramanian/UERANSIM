@@ -138,6 +138,13 @@ struct UeConfig
     /* SHARC run-scoped pseudonymous identity; never subscriber SUPI. */
     std::string sharcUeRef{};
 
+    /*
+     * One externally declared access/recovery objective for this scheduled
+     * UE activation. The primary SHARC cohort currently declares exactly
+     * one external episode per UE.
+     */
+    std::string sharcEpisodeId{};
+
     [[nodiscard]] std::string getNodeName() const
     {
         if (supi.has_value())

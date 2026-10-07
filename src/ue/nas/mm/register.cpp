@@ -117,9 +117,43 @@ EProcRc NasMm::sendInitialRegistration(EInitialRegCause regCause)
      * sendNasMessage() has successfully queued the encoded NAS PDU
      * toward the UE RRC task. This is UE-side NAS emission evidence;
      * it is NOT N2 arrival evidence.
+     *
+     * Attempt identity is allocated only after that successful enqueue,
+     * and is intentionally independent of the native Registration
+     * attempt counter.
      */
+    const uint64_t sharcAttemptIndex = m_sharcNextAttemptIndex++;
+
+    m_sharcActiveAttemptId =
+        m_base->config->sharcEpisodeId +
+        ":attempt-" +
+        std::to_string(sharcAttemptIndex);
+
+    std::string sharcRequestRole = "unknown";
+
+    if (sharcAttemptIndex == 0)
+    {
+        sharcRequestRole = "episode_first";
+    }
+    else if (
+        regCause == EInitialRegCause::T3511_EXPIRY_IN_ATT_REG ||
+        regCause == EInitialRegCause::T3502_EXPIRY_IN_ATT_REG)
+    {
+        /*
+         * These descendant causes are source-qualified native
+         * Registration recovery paths.
+         *
+         * Do not infer descendant status merely because another
+         * Registration Request came from the same UE.
+         */
+        sharcRequestRole = "native_recovery";
+    }
+
     sharc::EmitRegistrationRequest(
         m_base->config->sharcUeRef,
+        m_base->config->sharcEpisodeId,
+        m_sharcActiveAttemptId,
+        sharcRequestRole,
         ToJson(regCause).str(),
         m_regCounter,
         ToJson(m_mmSubState).str());

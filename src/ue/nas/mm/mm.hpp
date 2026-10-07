@@ -78,12 +78,29 @@ class NasMm
         uint64_t activeLocalIndex{};
         int64_t startSourceNs{};
         int64_t durationNs{};
+
+        /*
+         * Immutable correlation snapshot for this timer instance.
+         * A later Registration attempt must not relabel an already-started
+         * timer.
+         */
+        std::string episodeId{};
+        std::string attemptId{};
+
         bool active{};
     };
 
     SharcTimerTraceState m_sharcT3502{};
     SharcTimerTraceState m_sharcT3510{};
     SharcTimerTraceState m_sharcT3511{};
+
+    /*
+     * SHARC attempt ordinal is observation lineage, not the native
+     * Registration attempt counter. It therefore does not reset merely
+     * because a protocol counter resets.
+     */
+    uint64_t m_sharcNextAttemptIndex{};
+    std::string m_sharcActiveAttemptId{};
 
     friend class UeCmdHandler;
     friend class NasSm;

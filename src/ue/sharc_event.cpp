@@ -223,7 +223,11 @@ class EventSink
         m_out.close();
     }
 
-    Json NewBaseEvent(const std::string &eventType, const std::string &ueRef)
+    Json NewBaseEvent(
+        const std::string &eventType,
+        const std::string &ueRef,
+        const std::string &episodeId,
+        const std::string &attemptId)
     {
         const uint64_t seq = m_sourceSeq.fetch_add(1) + 1;
 
@@ -255,8 +259,14 @@ class EventSink
             {"correlation",
              Json::Obj({
                  {"ue_ref", ueRef},
-                 {"episode_id", nullptr},
-                 {"attempt_id", nullptr},
+                 {"episode_id",
+                  episodeId.empty()
+                      ? Json{nullptr}
+                      : Json{episodeId}},
+                 {"attempt_id",
+                  attemptId.empty()
+                      ? Json{nullptr}
+                      : Json{attemptId}},
                  {"context_epoch", nullptr},
                  {"local_cycle_id", nullptr},
              })},
@@ -265,16 +275,23 @@ class EventSink
 
     void EmitRegistrationRequest(
         const std::string &ueRef,
+        const std::string &episodeId,
+        const std::string &attemptId,
+        const std::string &requestRole,
         const std::string &trigger,
         int registrationCounter,
         const std::string &mmState)
     {
-        auto event = NewBaseEvent("UE_REG_REQUEST_TX", ueRef);
+        auto event = NewBaseEvent(
+            "UE_REG_REQUEST_TX",
+            ueRef,
+            episodeId,
+            attemptId);
 
         event.put(
             "registration",
             Json::Obj({
-                {"request_role", "unknown"},
+                {"request_role", requestRole},
                 {"trigger", trigger},
                 {"registration_counter", registrationCounter},
                 {"mm_state", mmState},
@@ -287,6 +304,8 @@ class EventSink
 
     void EmitTimerEvent(
         const std::string &ueRef,
+        const std::string &episodeId,
+        const std::string &attemptId,
         const std::string &timerName,
         const std::string &timerInstanceId,
         const std::string &phase,
@@ -308,7 +327,11 @@ class EventSink
         else
             throw std::runtime_error("Invalid SHARC timer phase: " + phase);
 
-        auto event = NewBaseEvent(eventType, ueRef);
+        auto event = NewBaseEvent(
+            eventType,
+            ueRef,
+            episodeId,
+            attemptId);
 
         event.put(
             "timer",
@@ -333,11 +356,17 @@ class EventSink
 
     void EmitRecoveryTrigger(
         const std::string &ueRef,
+        const std::string &episodeId,
+        const std::string &attemptId,
         const std::string &cause,
         int registrationCounter,
         const std::string &mmState)
     {
-        auto event = NewBaseEvent("UE_RECOVERY_TRIGGER", ueRef);
+        auto event = NewBaseEvent(
+            "UE_RECOVERY_TRIGGER",
+            ueRef,
+            episodeId,
+            attemptId);
 
         event.put(
             "registration",
@@ -562,17 +591,28 @@ bool EventSinkEnabled()
 
 void EmitRegistrationRequest(
     const std::string &ueRef,
+    const std::string &episodeId,
+    const std::string &attemptId,
+    const std::string &requestRole,
     const std::string &trigger,
     int registrationCounter,
     const std::string &mmState)
 {
     if (g_eventSink)
         g_eventSink->EmitRegistrationRequest(
-            ueRef, trigger, registrationCounter, mmState);
+            ueRef,
+            episodeId,
+            attemptId,
+            requestRole,
+            trigger,
+            registrationCounter,
+            mmState);
 }
 
 void EmitTimerEvent(
     const std::string &ueRef,
+    const std::string &episodeId,
+    const std::string &attemptId,
     const std::string &timerName,
     const std::string &timerInstanceId,
     const std::string &phase,
@@ -587,6 +627,8 @@ void EmitTimerEvent(
     if (g_eventSink)
         g_eventSink->EmitTimerEvent(
             ueRef,
+            episodeId,
+            attemptId,
             timerName,
             timerInstanceId,
             phase,
@@ -601,13 +643,20 @@ void EmitTimerEvent(
 
 void EmitRecoveryTrigger(
     const std::string &ueRef,
+    const std::string &episodeId,
+    const std::string &attemptId,
     const std::string &cause,
     int registrationCounter,
     const std::string &mmState)
 {
     if (g_eventSink)
         g_eventSink->EmitRecoveryTrigger(
-            ueRef, cause, registrationCounter, mmState);
+            ueRef,
+            episodeId,
+            attemptId,
+            cause,
+            registrationCounter,
+            mmState);
 }
 
 } // namespace nr::ue::sharc
